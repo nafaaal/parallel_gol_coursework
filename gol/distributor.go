@@ -54,6 +54,37 @@ func calculateNextState(p Params, world [][]byte) [][]byte {
 	return newWorld
 }
 
+func work (x, y, endX, endY int, world [][]byte) [][]byte {
+	//done some work pls
+	return world
+}
+
+func worker (startY, endY, startX, endX int, world [][]uint8, out chan<- [][]uint8){
+	//assign some work pls
+}
+
+func filter(p Params, world [][]byte) {
+	var newPixelData [][]uint8
+	if p.Threads == 1 {
+		newPixelData = work(0, p.ImageHeight, 0, p.ImageWidth, world)
+	} else {
+		workerHeight := p.ImageHeight / p.Threads
+		workerChannels := make([]chan [][]uint8, p.Threads)
+		for i := 0; i < p.Threads; i++ {
+			workerChannels[i] = make(chan [][]uint8)
+		}
+		for j := 0; j < p.Threads; j++ {
+			go worker(workerHeight*j, workerHeight*(j+1), 0, p.ImageWidth, world, workerChannels[j])
+			// result := <- worker_channels[j]
+			// newPixelData = append(newPixelData, result...);
+		}
+		for k := 0; k < p.Threads; k++ {
+			result := <-workerChannels[k]
+			newPixelData = append(newPixelData, result...);
+		}
+	}
+}
+
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 
@@ -72,7 +103,6 @@ func distributor(p Params, c distributorChannels) {
 
 	final := world
 
-	//Currently having issues with memory being overwriiten
 	turn := 0
 	for turn = 0 ; turn<p.Turns; turn++ {
 		world = calculateNextState(p, final)
