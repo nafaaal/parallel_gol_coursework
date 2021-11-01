@@ -31,14 +31,56 @@ func neighbours(p Params, y, x int , world [][]byte) byte {
 	return n;
 }
 
-func calculateNextState(p Params, world [][]byte) [][]byte {
-
-	newWorld := make([][]byte, p.ImageHeight)
-	for i := range newWorld {
-		newWorld[i] = make([]byte, p.ImageWidth)
+func makeMatrix(height, width int) [][]uint8 {
+	matrix := make([][]uint8, height)
+	for i := range matrix {
+		matrix[i] = make([]uint8, width)
 	}
+	return matrix
+}
+
+func loadPgmData(p Params, c distributorChannels, temp [][]uint8 )[][]uint8 {
+	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
+			temp[col][row] = <-c.ioInput
+		}
+	}
+	return temp
+}
+
+func writePgmData(p Params, c distributorChannels, temp [][]uint8){
+	c.ioFilename <- strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)
+	for col := 0; col < p.ImageHeight; col++ {
+		for row := 0; row < p.ImageWidth; row++ {
+			if temp[col][row] == 255 {
+				c.ioOutput <- 255
+			} else {
+				c.ioOutput <- 0
+			}
+		}
+	}
+}
+
+func findAliveCells(p Params, world [][]uint8) []util.Cell{
+	var a []util.Cell
+	for col := 0; col < p.ImageHeight; col++ {
+		for row := 0; row < p.ImageWidth; row++ {
+			if world[col][row] == 255 {
+				a = append(a, util.Cell{X: row, Y: col})
+			}
+		}
+	}
+	return a
+}
+
+func calculateNextState(p Params, startY, endY, startX, endX int, world [][]uint8) [][]byte {
+	height := endY - startY
+	width := endX - startX
+	
+	newWorld := makeMatrix(height,width) // probs using some other calculation
+	for col := 0; col < endY; col++ {
+		for row := 0; row < endX; row++ {
 			n := neighbours(p, col , row , world)
 			if world[col][row] == 255 {
 				if n == 2 || n == 3 {
@@ -54,19 +96,16 @@ func calculateNextState(p Params, world [][]byte) [][]byte {
 	return newWorld
 }
 
-func work (x, y, endX, endY int, world [][]byte) [][]byte {
-	//done some work pls
-	return world
+
+func worker (p Params, startY, endY, startX, endX int, world [][]uint8, out chan<- [][]uint8){
+	newPixelData := calculateNextState(p, startY, endY, startX, endX, world)
+	out <- newPixelData
 }
 
-func worker (startY, endY, startX, endX int, world [][]uint8, out chan<- [][]uint8){
-	//assign some work pls
-}
-
-func filter(p Params, world [][]byte) {
+func filter(p Params, world [][]byte) [][]byte {
 	var newPixelData [][]uint8
 	if p.Threads == 1 {
-		newPixelData = work(0, p.ImageHeight, 0, p.ImageWidth, world)
+		newPixelData = calculateNextState(p,0, p.ImageHeight, 0, p.ImageWidth, world)
 	} else {
 		workerHeight := p.ImageHeight / p.Threads
 		workerChannels := make([]chan [][]uint8, p.Threads)
@@ -74,63 +113,37 @@ func filter(p Params, world [][]byte) {
 			workerChannels[i] = make(chan [][]uint8)
 		}
 		for j := 0; j < p.Threads; j++ {
-			go worker(workerHeight*j, workerHeight*(j+1), 0, p.ImageWidth, world, workerChannels[j])
-			// result := <- worker_channels[j]
-			// newPixelData = append(newPixelData, result...);
+			go worker(p, workerHeight*j, workerHeight*(j+1), 0, p.ImageWidth, world, workerChannels[j])
 		}
 		for k := 0; k < p.Threads; k++ {
 			result := <-workerChannels[k]
-			newPixelData = append(newPixelData, result...);
+			newPixelData = append(newPixelData, result...)
 		}
 	}
+	return newPixelData
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 
-	world := make([][]byte, p.ImageHeight)
-	for i := range world {
-		world[i] = make([]byte, p.ImageWidth)
-	}
+	temp := makeMatrix(p.ImageHeight, p.ImageWidth)
 
 	c.ioCommand <-ioInput
-	c.ioFilename <- strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)
-	for col := 0; col < p.ImageHeight; col++ {
-		for row := 0; row < p.ImageWidth; row++ {
-			world[col][row] = <- c.ioInput
-		}
-	}
+	world := loadPgmData(p,c, temp)
 
 	final := world
-
 	turn := 0
 	for turn = 0 ; turn<p.Turns; turn++ {
-		world = calculateNextState(p, final)
+		//implement parrelization work here and get final world order
+		world = filter(p, final)
 		copy(final, world)
-		c.events <- TurnComplete{turn}
+		//c.events <- TurnComplete{turn}
 	}
+	// by the time that for loop ends, world has final state
 
 	c.ioCommand <- ioOutput
-	c.ioFilename <- strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)
-	for col := 0; col < p.ImageHeight; col++ {
-		for row := 0; row < p.ImageWidth; row++ {
-			if world[col][row] == 255 {
-				c.ioOutput <- 255
-			} else {
-				c.ioOutput <- 0
-			}
-		}
-	}
-
-	var a []util.Cell
-	for col := 0; col < p.ImageHeight; col++ {
-		for row := 0; row < p.ImageWidth; row++ {
-			if world[col][row] == 255 {
-				a = append(a, util.Cell{X: row, Y: col})
-			}
-		}
-	}
-	c.events <- FinalTurnComplete{turn, a}
+	writePgmData(p,c,world)
+	c.events <- FinalTurnComplete{turn, findAliveCells(p,world)}
 
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
