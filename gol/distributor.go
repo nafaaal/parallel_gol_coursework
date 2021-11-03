@@ -22,13 +22,20 @@ func retOne(n byte) byte{
 }
 
 
-func neighbours(p Params, y, x int , world [][]byte) byte {
+func neighbours(p Params, y, x int , data func(y, x int) uint8) uint8 {
 	imht := p.ImageHeight
 	imwt := p.ImageWidth
-	n := retOne(world[(y+imht-1)%imht][(x+imwt-1)%imwt]) + retOne(world[(y+imht-1)%imht][(x+imwt)%imwt]) + retOne(world[(y+imht-1)%imht][(x+imwt+1)%imwt])
-	n += retOne(world[(y+imht)%imht][(x+imwt-1)%imwt]) +                                          		   retOne(world[(y+imht)%imht][(x+imwt+1)%imwt])
-	n += retOne(world[(y+imht+1)%imht][(x+imwt-1)%imwt]) + retOne(world[(y+imht+1)%imht][(x+imwt)%imwt]) + retOne(world[(y+imht+1)%imht][(x+imwt+1)%imwt])
-	return n;
+	//retOne(data((y+imht+1)%imht,(x+imwt)%imwt))
+	n := retOne(data((y+imht-1)%imht,(x+imwt-1)%imwt)) + retOne(data((y+imht-1)%imht,(x+imwt)%imwt)) + retOne(data((y+imht-1)%imht,(x+imwt+1)%imwt))
+	n += retOne(data((y+imht)%imht,(x+imwt-1)%imwt)) +                                          		   retOne(data((y+imht)%imht,(x+imwt+1)%imwt))
+	n += retOne(data((y+imht+1)%imht,(x+imwt-1)%imwt)) + retOne(data((y+imht+1)%imht,(x+imwt)%imwt)) + retOne(data((y+imht+1)%imht,(x+imwt+1)%imwt))
+	return n
+}
+
+func makeImmutableMatrix(matrix [][]uint8) func(y, x int) uint8 {
+	return func(y, x int) uint8 {
+		return matrix[y][x]
+	}
 }
 
 func makeMatrix(height, width int) [][]uint8 {
@@ -74,15 +81,15 @@ func findAliveCells(p Params, world [][]uint8) []util.Cell{
 	return a
 }
 
-func calculateNextState(p Params, startY, endY, startX, endX int, world [][]uint8) [][]byte {
+func calculateNextState(p Params, startY, endY, startX, endX int, data func(y, x int) uint8) [][]byte {
 	height := endY - startY
-	width := endX - startX
-	
-	newWorld := makeMatrix(height,width) // probs using some other calculation
+	//width := endX - startX
+
+	newWorld := makeMatrix(height,endX) // probs using some other calculation
 	for col := 0; col < endY; col++ {
 		for row := 0; row < endX; row++ {
-			n := neighbours(p, col , row , world)
-			if world[col][row] == 255 {
+			n := neighbours(p, col , row , data)
+			if data(col,row) == 255 {
 				if n == 2 || n == 3 {
 					newWorld[col][row] = 255
 				}
@@ -97,15 +104,16 @@ func calculateNextState(p Params, startY, endY, startX, endX int, world [][]uint
 }
 
 
-func worker (p Params, startY, endY, startX, endX int, world [][]uint8, out chan<- [][]uint8){
-	newPixelData := calculateNextState(p, startY, endY, startX, endX, world)
+func worker (p Params, startY, endY, startX, endX int, data func(y, x int) uint8, out chan<- [][]uint8){
+	newPixelData := calculateNextState(p, startY, endY, startX, endX, data)
 	out <- newPixelData
 }
 
 func filter(p Params, world [][]byte) [][]byte {
+	imm := makeImmutableMatrix(world)
 	var newPixelData [][]uint8
 	if p.Threads == 1 {
-		newPixelData = calculateNextState(p,0, p.ImageHeight, 0, p.ImageWidth, world)
+		newPixelData = calculateNextState(p,0, p.ImageHeight, 0, p.ImageWidth, imm)
 	} else {
 		workerHeight := p.ImageHeight / p.Threads
 		workerChannels := make([]chan [][]uint8, p.Threads)
@@ -113,7 +121,7 @@ func filter(p Params, world [][]byte) [][]byte {
 			workerChannels[i] = make(chan [][]uint8)
 		}
 		for j := 0; j < p.Threads; j++ {
-			go worker(p, workerHeight*j, workerHeight*(j+1), 0, p.ImageWidth, world, workerChannels[j])
+			go worker(p, workerHeight*j, workerHeight*(j+1), 0, p.ImageWidth, imm, workerChannels[j])
 		}
 		for k := 0; k < p.Threads; k++ {
 			result := <-workerChannels[k]
@@ -126,18 +134,18 @@ func filter(p Params, world [][]byte) [][]byte {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 
-	temp := makeMatrix(p.ImageHeight, p.ImageWidth)
+	initialWorld := makeMatrix(p.ImageHeight, p.ImageWidth)
 
 	c.ioCommand <-ioInput
-	world := loadPgmData(p,c, temp)
+	world := loadPgmData(p,c, initialWorld)
 
 	final := world
 	turn := 0
 	for turn = 0 ; turn<p.Turns; turn++ {
-		//implement parrelization work here and get final world order
+		// still failing for anything other than 1 thread (except for 0 turns which all pass)
 		world = filter(p, final)
 		copy(final, world)
-		//c.events <- TurnComplete{turn}
+		c.events <- TurnComplete{turn}
 	}
 	// by the time that for loop ends, world has final state
 
