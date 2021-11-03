@@ -25,7 +25,6 @@ func retOne(n byte) byte{
 func neighbours(p Params, y, x int , data func(y, x int) uint8) uint8 {
 	imht := p.ImageHeight
 	imwt := p.ImageWidth
-	//retOne(data((y+imht+1)%imht,(x+imwt)%imwt))
 	n := retOne(data((y+imht-1)%imht,(x+imwt-1)%imwt)) + retOne(data((y+imht-1)%imht,(x+imwt)%imwt)) + retOne(data((y+imht-1)%imht,(x+imwt+1)%imwt))
 	n += retOne(data((y+imht)%imht,(x+imwt-1)%imwt)) +                                          		   retOne(data((y+imht)%imht,(x+imwt+1)%imwt))
 	n += retOne(data((y+imht+1)%imht,(x+imwt-1)%imwt)) + retOne(data((y+imht+1)%imht,(x+imwt)%imwt)) + retOne(data((y+imht+1)%imht,(x+imwt+1)%imwt))
@@ -85,11 +84,11 @@ func calculateNextState(p Params, startY, endY, startX, endX int, data func(y, x
 	height := endY - startY
 	//width := endX - startX
 
-	newWorld := makeMatrix(height,endX) // probs using some other calculation
-	for col := 0; col < endY; col++ {
+	newWorld := makeMatrix(height, endX) // probs using some other calculation
+	for col := 0; col < height; col++ {
 		for row := 0; row < endX; row++ {
-			n := neighbours(p, col , row , data)
-			if data(col,row) == 255 {
+			n := neighbours(p, startY+col , row , data) // would need to be modified to get correct neighbours based on position
+			if data(startY+col,row) == 255 {
 				if n == 2 || n == 3 {
 					newWorld[col][row] = 255
 				}
@@ -147,6 +146,13 @@ func distributor(p Params, c distributorChannels) {
 		copy(final, world)
 		c.events <- TurnComplete{turn}
 	}
+
+	//For Testing
+	//for x := 0; x<p.ImageHeight; x++{
+		//for y := 0; y < 1; y++{
+		//	fmt.Println(world[x])
+		//}
+	//}
 	// by the time that for loop ends, world has final state
 
 	c.ioCommand <- ioOutput
