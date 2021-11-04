@@ -1,6 +1,7 @@
 package gol
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -51,18 +52,25 @@ func makeMatrix(height, width int) [][]uint8 {
 	return matrix
 }
 
-func loadPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
+func readPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
+	c.ioCommand <-ioInput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
-			world[col][row] = <-c.ioInput
+			data :=  <- c.ioInput
+			world[col][row] = data
+			if data == 255 {
+				c.events <- CellFlipped{0,  util.Cell{X: row, Y: col}}
+			}
 		}
 	}
 	return world
 }
 
-func writePgmData(p Params, c distributorChannels, world [][]uint8){
-	c.ioFilename <- strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)+"x"+strconv.Itoa(p.Turns)
+func writePgmData(p Params, c distributorChannels, turn int, world [][]uint8){
+	filename := strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)+"x"+strconv.Itoa(p.Turns)
+	c.ioCommand <- ioOutput
+	c.ioFilename <- filename
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
 			if world[col][row] == 255 {
@@ -72,6 +80,7 @@ func writePgmData(p Params, c distributorChannels, world [][]uint8){
 			}
 		}
 	}
+	c.events <- ImageOutputComplete{turn, filename}
 }
 
 func tick(i chan int){
@@ -94,7 +103,7 @@ func findAliveCells(p Params, world [][]uint8) []util.Cell{
 }
 
 
-func calculateNextState(p Params, startY, endY, endX int, worldCopy func(y, x int) uint8) [][]byte {
+func calculateNextState(p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8,) [][]byte {
 	height := endY - startY
 	newWorld := makeMatrix(height, endX)
 	for col := 0; col < height; col++ {
@@ -103,10 +112,13 @@ func calculateNextState(p Params, startY, endY, endX int, worldCopy func(y, x in
 			if worldCopy(startY+col,row) == 255 {
 				if n == 2 || n == 3 {
 					newWorld[col][row] = 255
+				} else {
+					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY+col}}
 				}
 			} else {
 				if n == 3 {
 					newWorld[col][row] = 255
+					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY+col}}
 				}
 			}
 		}
@@ -115,16 +127,16 @@ func calculateNextState(p Params, startY, endY, endX int, worldCopy func(y, x in
 }
 
 
-func worker (p Params, startY, endY, endX int, worldCopy func(y, x int) uint8, out chan<- [][]uint8){
-	newPixelData := calculateNextState(p, startY, endY, endX, worldCopy)
+func worker (p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8,){
+	newPixelData := calculateNextState(p, c, startY, endY, endX, turn, worldCopy)
 	out <- newPixelData
 }
 
-func playTurn(p Params, world [][]byte) [][]byte {
+func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byte {
 	worldCopy := makeImmutableMatrix(world)
 	var newPixelData [][]uint8
 	if p.Threads == 1 {
-		newPixelData = calculateNextState(p,0, p.ImageHeight, p.ImageWidth, worldCopy)
+		newPixelData = calculateNextState(p, c,0, p.ImageHeight, p.ImageWidth, turn, worldCopy)
 	} else {
 		workerHeight := p.ImageHeight / p.Threads
 		workerChannels := make([]chan [][]uint8, p.Threads)
@@ -134,9 +146,9 @@ func playTurn(p Params, world [][]byte) [][]byte {
 		for j := 0; j < p.Threads; j++ {
 			if j == p.Threads - 1 { // send the extra part when p.ImageHeight / p.Threads is not a whole number
 				extraHeight :=  workerHeight*(j+1) + (p.ImageHeight % p.Threads)
-				go worker(p, workerHeight*j, extraHeight, p.ImageWidth, worldCopy, workerChannels[j])
+				go worker(p, c, workerHeight*j, extraHeight, p.ImageWidth, turn, worldCopy, workerChannels[j])
 			} else {
-				go worker(p, workerHeight*j, workerHeight*(j+1), p.ImageWidth, worldCopy, workerChannels[j])
+				go worker(p, c, workerHeight*j, workerHeight*(j+1), p.ImageWidth, turn, worldCopy, workerChannels[j])
 			}
 		}
 		for k := 0; k < p.Threads; k++ {
@@ -144,35 +156,60 @@ func playTurn(p Params, world [][]byte) [][]byte {
 			newPixelData = append(newPixelData, result...)
 		}
 	}
+
 	return newPixelData
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
-func distributor(p Params, c distributorChannels) {
+func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	initialWorld := makeMatrix(p.ImageHeight, p.ImageWidth)
-
-	c.ioCommand <-ioInput
-	world := loadPgmData(p, c, initialWorld)
+	world := readPgmData(p, c, initialWorld)
 
 	turn := 0
 
 	i := make(chan int)
 	go tick(i)
 
-	for turn = 0 ; turn<p.Turns; turn++ {
+	//AliveCellsCount { CompletedTurns int, CellsCount int } FINISHED
+	//ImageOutputComplete { CompletedTurns int, Filename string } FINISHED
+	//StateChange { CompletedTurns int, NewState State } FINISHED
+	//CellFlipped { CompletedTurns int, Cell State } // This even should be sent every time a cell changes state.
+	//TurnComplete { CompletedTurns int }
+	//FinalTurnComplete { CompletedTurns int, []util.Cell } FINISHED
+
+NextTurnLoop:
+	for turn <p.Turns {
 		select {
 		case <- i:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
+		case key := <- keyPresses:
+			if key == int32(115) { // 's'
+				fmt.Println("Starting output")
+				writePgmData(p, c, turn, world)
+			}
+			if key == int32(113) { // 'q'
+				writePgmData(p, c, turn, world)
+				c.events <- StateChange{turn, Quitting}
+				break NextTurnLoop
+			}
+			if key == int32(112) { // 'p'
+				c.events <- StateChange{turn, Paused}
+				for {
+					await := <-keyPresses
+					if await == int32(112) {
+						c.events <- StateChange{turn, Executing}
+						break
+					}
+				}
+			}
 		default:
-			turn = turn
+			world = playTurn(p, c, turn, world)
+			turn++
+			c.events <- TurnComplete{ turn}
 		}
-		world = playTurn(p, world)
-		//c.events <- TurnComplete{turn}
 	}
 
-	c.ioCommand <- ioOutput
-	writePgmData(p, c, world)
 	c.events <- FinalTurnComplete{turn, findAliveCells(p,world)}
 
 	// Make sure that the Io has finished any output before exiting.
