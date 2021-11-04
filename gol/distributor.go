@@ -166,12 +166,10 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	//AliveCellsCount { CompletedTurns int, CellsCount int } FINISHED
 	//ImageOutputComplete { CompletedTurns int, Filename string } FINISHED
-	//StateChange { CompletedTurns int, NewState State }
-	//CellFlipped { CompletedTurns int, Cell State }
+	//StateChange { CompletedTurns int, NewState State } FINISHED
+	//CellFlipped { CompletedTurns int, Cell State } // This even should be sent every time a cell changes state.
 	//TurnComplete { CompletedTurns int }
 	//FinalTurnComplete { CompletedTurns int, []util.Cell } FINISHED
-
-	stop := false
 
 NextTurnLoop:
 	for turn = 0 ; turn<p.Turns; turn++ {
@@ -180,6 +178,7 @@ NextTurnLoop:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
 		case key := <- keyPresses:
 			if key == int32(115) { // 's'
+				fmt.Println("Starting output")
 				writePgmData(p, c, turn, world)
 			}
 			if key == int32(113) { // 'q'
@@ -188,12 +187,13 @@ NextTurnLoop:
 				break NextTurnLoop
 			}
 			if key == int32(112) { // 'p'
-				if !stop {
-					fmt.Printf("Paused. Current turn is %d\n" , turn)
-					stop = true
-				} else {
-					fmt.Printf("Resuming. Current turn is %d\n" , turn)
-					stop = false
+				c.events <- StateChange{turn, Paused}
+				for {
+					await := <-keyPresses
+					if await == int32(112) {
+						c.events <- StateChange{turn, Executing}
+						break
+					}
 				}
 			}
 		default:
