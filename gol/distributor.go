@@ -211,6 +211,7 @@ NextTurnLoop:
 	}
 
 	c.events <- FinalTurnComplete{turn, findAliveCells(p,world)}
+	writePgmData(p, c, turn, world) // This line needed if out/ does not have files
 
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
