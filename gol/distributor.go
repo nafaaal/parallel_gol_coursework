@@ -171,6 +171,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//TurnComplete { CompletedTurns int }
 	//FinalTurnComplete { CompletedTurns int, []util.Cell } FINISHED
 
+	stop := false
 
 NextTurnLoop:
 	for turn = 0 ; turn<p.Turns; turn++ {
@@ -178,19 +179,22 @@ NextTurnLoop:
 		case <- i:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
 		case key := <- keyPresses:
-			//fmt.Println(key)  // q==113,  s==115 p==112
-			//fmt.Println(reflect.TypeOf(key))
-			if key == int32(115) {
+			if key == int32(115) { // 's'
 				writePgmData(p, c, turn, world)
 			}
-			if key == int32(113) {
+			if key == int32(113) { // 'q'
 				writePgmData(p, c, turn, world)
-				fmt.Printf("Saving and exiting Current World\n")
 				c.events <- StateChange{turn, Quitting}
 				break NextTurnLoop
 			}
-			if key == int32(112) {
-				fmt.Printf("Paused. Current turn is %d\n" , turn)
+			if key == int32(112) { // 'p'
+				if !stop {
+					fmt.Printf("Paused. Current turn is %d\n" , turn)
+					stop = true
+				} else {
+					fmt.Printf("Resuming. Current turn is %d\n" , turn)
+					stop = false
+				}
 			}
 		default:
 			//c.events <- TurnComplete{turn}
