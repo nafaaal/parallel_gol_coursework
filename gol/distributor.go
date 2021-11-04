@@ -1,7 +1,6 @@
 package gol
 
 import (
-	"fmt"
 	"strconv"
 	"time"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -78,7 +77,7 @@ func writePgmData(p Params, c distributorChannels, world [][]uint8){
 func tick(i chan int){
 	for {
 		i <- 1
-		time.After(2*time.Second)
+		<-time.After(2*time.Second)
 	}
 }
 
@@ -166,7 +165,7 @@ func distributor(p Params, c distributorChannels) {
 		case <- i:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
 		default:
-			fmt.Println("Time not come")
+			turn = turn
 		}
 		world = playTurn(p, world)
 		//c.events <- TurnComplete{turn}
