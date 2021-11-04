@@ -1,6 +1,7 @@
 package gol
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -148,7 +149,7 @@ func playTurn(p Params, world [][]byte) [][]byte {
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
-func distributor(p Params, c distributorChannels) {
+func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	initialWorld := makeMatrix(p.ImageHeight, p.ImageWidth)
 
@@ -160,15 +161,28 @@ func distributor(p Params, c distributorChannels) {
 	i := make(chan int)
 	go tick(i)
 
+NextTurnLoop:
 	for turn = 0 ; turn<p.Turns; turn++ {
 		select {
 		case <- i:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
+		case key := <- keyPresses:
+			if key == 's'{
+				writePgmData(p, c, world)
+				fmt.Printf("Current World Saved \n")
+			}
+			if key == 'q'{
+				writePgmData(p, c, world)
+				fmt.Printf("Exiting Current World\n")
+				break NextTurnLoop
+			}
+			if key == 'p'{
+				fmt.Printf("Paused. Current turn is %d\n" , turn)
+			}
 		default:
 			turn = turn
 		}
 		world = playTurn(p, world)
-		//c.events <- TurnComplete{turn}
 	}
 
 	c.ioCommand <- ioOutput
