@@ -63,9 +63,10 @@ func readPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
 	return world
 }
 
-func writePgmData(p Params, c distributorChannels, world [][]uint8){
+func writePgmData(p Params, c distributorChannels, turn int, world [][]uint8){
+	filename := strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)+"x"+strconv.Itoa(p.Turns)
 	c.ioCommand <- ioOutput
-	c.ioFilename <- strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)+"x"+strconv.Itoa(p.Turns)
+	c.ioFilename <- filename
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
 			if world[col][row] == 255 {
@@ -75,6 +76,7 @@ func writePgmData(p Params, c distributorChannels, world [][]uint8){
 			}
 		}
 	}
+	c.events <- ImageOutputComplete{turn, filename}
 }
 
 func tick(i chan int){
@@ -147,6 +149,7 @@ func playTurn(p Params, world [][]byte) [][]byte {
 			newPixelData = append(newPixelData, result...)
 		}
 	}
+
 	return newPixelData
 }
 
@@ -161,6 +164,14 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	i := make(chan int)
 	go tick(i)
 
+	//AliveCellsCount { CompletedTurns int, CellsCount int } FINISHED
+	//ImageOutputComplete { CompletedTurns int, Filename string } FINISHED
+	//StateChange { CompletedTurns int, NewState State }
+	//CellFlipped { CompletedTurns int, Cell State }
+	//TurnComplete { CompletedTurns int }
+	//FinalTurnComplete { CompletedTurns int, []util.Cell } FINISHED
+
+
 NextTurnLoop:
 	for turn = 0 ; turn<p.Turns; turn++ {
 		select {
@@ -170,12 +181,12 @@ NextTurnLoop:
 			//fmt.Println(key)  // q==113,  s==115 p==112
 			//fmt.Println(reflect.TypeOf(key))
 			if key == int32(115) {
-				writePgmData(p, c, world)
-				fmt.Printf("Current World Saved \n")
+				writePgmData(p, c, turn, world)
 			}
 			if key == int32(113) {
-				writePgmData(p, c, world)
+				writePgmData(p, c, turn, world)
 				fmt.Printf("Saving and exiting Current World\n")
+				c.events <- StateChange{turn, Quitting}
 				break NextTurnLoop
 			}
 			if key == int32(112) {
