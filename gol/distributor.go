@@ -123,7 +123,12 @@ func playTurn(p Params, world [][]byte) [][]byte {
 			workerChannels[i] = make(chan [][]uint8)
 		}
 		for j := 0; j < p.Threads; j++ {
-			go worker(p, workerHeight*j, workerHeight*(j+1), p.ImageWidth, worldCopy, workerChannels[j])
+			if j == p.Threads - 1 { // send the extra part when p.ImageHeight / p.Threads is not a whole number
+				extraHeight :=  workerHeight*(j+1) + (p.ImageHeight % p.Threads)
+				go worker(p, workerHeight*j, extraHeight, p.ImageWidth, worldCopy, workerChannels[j])
+			} else {
+				go worker(p, workerHeight*j, workerHeight*(j+1), p.ImageWidth, worldCopy, workerChannels[j])
+			}
 		}
 		for k := 0; k < p.Threads; k++ {
 			result := <-workerChannels[k]
