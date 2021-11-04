@@ -63,7 +63,7 @@ func loadPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
 }
 
 func writePgmData(p Params, c distributorChannels, world [][]uint8){
-	c.ioFilename <- strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)
+	c.ioFilename <- strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)+"x"+strconv.Itoa(p.Turns)
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
 			if world[col][row] == 255 {
@@ -169,7 +169,7 @@ func distributor(p Params, c distributorChannels) {
 			fmt.Println("Time not come")
 		}
 		world = playTurn(p, world)
-		c.events <- TurnComplete{turn}
+		//c.events <- TurnComplete{turn}
 	}
 
 	c.ioCommand <- ioOutput
