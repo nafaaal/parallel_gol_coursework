@@ -1,7 +1,9 @@
 package gol
 
 import (
+	"fmt"
 	"strconv"
+	"time"
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -73,6 +75,13 @@ func writePgmData(p Params, c distributorChannels, world [][]uint8){
 	}
 }
 
+func tick(i chan int){
+	for {
+		i <- 1
+		time.After(2*time.Second)
+	}
+}
+
 func findAliveCells(p Params, world [][]uint8) []util.Cell{
 	var a []util.Cell
 	for col := 0; col < p.ImageHeight; col++ {
@@ -84,6 +93,7 @@ func findAliveCells(p Params, world [][]uint8) []util.Cell{
 	}
 	return a
 }
+
 
 func calculateNextState(p Params, startY, endY, endX int, worldCopy func(y, x int) uint8) [][]byte {
 	height := endY - startY
@@ -147,7 +157,17 @@ func distributor(p Params, c distributorChannels) {
 	world := loadPgmData(p, c, initialWorld)
 
 	turn := 0
+
+	i := make(chan int)
+	go tick(i)
+
 	for turn = 0 ; turn<p.Turns; turn++ {
+		select {
+		case <- i:
+			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
+		default:
+			fmt.Println("Time not come")
+		}
 		world = playTurn(p, world)
 		c.events <- TurnComplete{turn}
 	}
