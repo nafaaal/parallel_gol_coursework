@@ -170,14 +170,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	i := make(chan int)
 	go tick(i)
-
-	//AliveCellsCount { CompletedTurns int, CellsCount int } FINISHED
-	//ImageOutputComplete { CompletedTurns int, Filename string } FINISHED
-	//StateChange { CompletedTurns int, NewState State } FINISHED
-	//CellFlipped { CompletedTurns int, Cell State } // This even should be sent every time a cell changes state.
-	//TurnComplete { CompletedTurns int }
-	//FinalTurnComplete { CompletedTurns int, []util.Cell } FINISHED
-
+	
 NextTurnLoop:
 	for turn <p.Turns {
 		select {
