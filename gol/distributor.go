@@ -14,21 +14,26 @@ type distributorChannels struct {
 	ioInput    <-chan uint8 //data is received from this eg: var := <- ioInput
 }
 
-func retOne(n byte) byte{
-	if n>0{
-		return 1;
+func isAlive(n byte) byte {
+	if n == 255 {
+		return 1
 	}
-	return 0;
+	return 0
 }
 
 
 func neighbours(p Params, y, x int , data func(y, x int) uint8) uint8 {
-	imht := p.ImageHeight
-	imwt := p.ImageWidth
-	n := retOne(data((y+imht-1)%imht,(x+imwt-1)%imwt)) + retOne(data((y+imht-1)%imht,(x+imwt)%imwt)) + retOne(data((y+imht-1)%imht,(x+imwt+1)%imwt))
-	n += retOne(data((y+imht)%imht,(x+imwt-1)%imwt)) +                                          		   retOne(data((y+imht)%imht,(x+imwt+1)%imwt))
-	n += retOne(data((y+imht+1)%imht,(x+imwt-1)%imwt)) + retOne(data((y+imht+1)%imht,(x+imwt)%imwt)) + retOne(data((y+imht+1)%imht,(x+imwt+1)%imwt))
-	return n
+	var num uint8
+	for i := -1; i<2; i++{
+		for j := -1; j<2; j++{
+			if i != 0 || j != 0 {
+				height := (y + p.ImageHeight + i) % p.ImageHeight
+				width := (x + p.ImageWidth + j) % p.ImageWidth
+				num += isAlive(data(height, width))
+			}
+		}
+	}
+	return num
 }
 
 func makeImmutableMatrix(matrix [][]uint8) func(y, x int) uint8 {
@@ -45,21 +50,21 @@ func makeMatrix(height, width int) [][]uint8 {
 	return matrix
 }
 
-func loadPgmData(p Params, c distributorChannels, temp [][]uint8 )[][]uint8 {
+func loadPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
-			temp[col][row] = <-c.ioInput
+			world[col][row] = <-c.ioInput
 		}
 	}
-	return temp
+	return world
 }
 
-func writePgmData(p Params, c distributorChannels, temp [][]uint8){
+func writePgmData(p Params, c distributorChannels, world [][]uint8){
 	c.ioFilename <- strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
-			if temp[col][row] == 255 {
+			if world[col][row] == 255 {
 				c.ioOutput <- 255
 			} else {
 				c.ioOutput <- 0
@@ -80,15 +85,13 @@ func findAliveCells(p Params, world [][]uint8) []util.Cell{
 	return a
 }
 
-func calculateNextState(p Params, startY, endY, startX, endX int, data func(y, x int) uint8) [][]byte {
+func calculateNextState(p Params, startY, endY, endX int, worldCopy func(y, x int) uint8) [][]byte {
 	height := endY - startY
-	//width := endX - startX
-
-	newWorld := makeMatrix(height, endX) // probs using some other calculation
+	newWorld := makeMatrix(height, endX)
 	for col := 0; col < height; col++ {
 		for row := 0; row < endX; row++ {
-			n := neighbours(p, startY+col , row , data) // would need to be modified to get correct neighbours based on position
-			if data(startY+col,row) == 255 {
+			n := neighbours(p, startY+col , row , worldCopy) // would need to be modified to get correct neighbours based on position
+			if worldCopy(startY+col,row) == 255 {
 				if n == 2 || n == 3 {
 					newWorld[col][row] = 255
 				}
@@ -103,16 +106,16 @@ func calculateNextState(p Params, startY, endY, startX, endX int, data func(y, x
 }
 
 
-func worker (p Params, startY, endY, startX, endX int, data func(y, x int) uint8, out chan<- [][]uint8){
-	newPixelData := calculateNextState(p, startY, endY, startX, endX, data)
+func worker (p Params, startY, endY, endX int, worldCopy func(y, x int) uint8, out chan<- [][]uint8){
+	newPixelData := calculateNextState(p, startY, endY, endX, worldCopy)
 	out <- newPixelData
 }
 
-func filter(p Params, world [][]byte) [][]byte {
-	imm := makeImmutableMatrix(world)
+func playTurn(p Params, world [][]byte) [][]byte {
+	worldCopy := makeImmutableMatrix(world)
 	var newPixelData [][]uint8
 	if p.Threads == 1 {
-		newPixelData = calculateNextState(p,0, p.ImageHeight, 0, p.ImageWidth, imm)
+		newPixelData = calculateNextState(p,0, p.ImageHeight, p.ImageWidth, worldCopy)
 	} else {
 		workerHeight := p.ImageHeight / p.Threads
 		workerChannels := make([]chan [][]uint8, p.Threads)
@@ -120,7 +123,7 @@ func filter(p Params, world [][]byte) [][]byte {
 			workerChannels[i] = make(chan [][]uint8)
 		}
 		for j := 0; j < p.Threads; j++ {
-			go worker(p, workerHeight*j, workerHeight*(j+1), 0, p.ImageWidth, imm, workerChannels[j])
+			go worker(p, workerHeight*j, workerHeight*(j+1), p.ImageWidth, worldCopy, workerChannels[j])
 		}
 		for k := 0; k < p.Threads; k++ {
 			result := <-workerChannels[k]
@@ -136,27 +139,16 @@ func distributor(p Params, c distributorChannels) {
 	initialWorld := makeMatrix(p.ImageHeight, p.ImageWidth)
 
 	c.ioCommand <-ioInput
-	world := loadPgmData(p,c, initialWorld)
+	world := loadPgmData(p, c, initialWorld)
 
-	final := world
 	turn := 0
 	for turn = 0 ; turn<p.Turns; turn++ {
-		// still failing for anything other than 1 thread (except for 0 turns which all pass)
-		world = filter(p, final)
-		copy(final, world)
+		world = playTurn(p, world)
 		c.events <- TurnComplete{turn}
 	}
 
-	//For Testing
-	//for x := 0; x<p.ImageHeight; x++{
-		//for y := 0; y < 1; y++{
-		//	fmt.Println(world[x])
-		//}
-	//}
-	// by the time that for loop ends, world has final state
-
 	c.ioCommand <- ioOutput
-	writePgmData(p,c,world)
+	writePgmData(p, c, world)
 	c.events <- FinalTurnComplete{turn, findAliveCells(p,world)}
 
 	// Make sure that the Io has finished any output before exiting.
