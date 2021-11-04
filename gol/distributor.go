@@ -172,7 +172,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//FinalTurnComplete { CompletedTurns int, []util.Cell } FINISHED
 
 NextTurnLoop:
-	for turn = 0 ; turn<p.Turns; turn++ {
+	for turn <p.Turns {
 		select {
 		case <- i:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
@@ -197,10 +197,9 @@ NextTurnLoop:
 				}
 			}
 		default:
-			//c.events <- TurnComplete{turn}
-			turn = turn
+			world = playTurn(p, world)
+			turn++
 		}
-		world = playTurn(p, world)
 	}
 
 	c.events <- FinalTurnComplete{turn, findAliveCells(p,world)}
