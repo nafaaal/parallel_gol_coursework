@@ -52,7 +52,8 @@ func makeMatrix(height, width int) [][]uint8 {
 	return matrix
 }
 
-func loadPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
+func readPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
+	c.ioCommand <-ioInput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
@@ -63,6 +64,7 @@ func loadPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
 }
 
 func writePgmData(p Params, c distributorChannels, world [][]uint8){
+	c.ioCommand <- ioOutput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)+"x"+strconv.Itoa(p.Turns)
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
@@ -152,9 +154,7 @@ func playTurn(p Params, world [][]byte) [][]byte {
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	initialWorld := makeMatrix(p.ImageHeight, p.ImageWidth)
-
-	c.ioCommand <-ioInput
-	world := loadPgmData(p, c, initialWorld)
+	world := readPgmData(p, c, initialWorld)
 
 	turn := 0
 
@@ -167,26 +167,27 @@ NextTurnLoop:
 		case <- i:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
 		case key := <- keyPresses:
-			if key == 's'{
+			//fmt.Println(key)  // q==113,  s==115 p==112
+			//fmt.Println(reflect.TypeOf(key))
+			if key == int32(115) {
 				writePgmData(p, c, world)
 				fmt.Printf("Current World Saved \n")
 			}
-			if key == 'q'{
+			if key == int32(113) {
 				writePgmData(p, c, world)
-				fmt.Printf("Exiting Current World\n")
+				fmt.Printf("Saving and exiting Current World\n")
 				break NextTurnLoop
 			}
-			if key == 'p'{
+			if key == int32(112) {
 				fmt.Printf("Paused. Current turn is %d\n" , turn)
 			}
 		default:
+			//c.events <- TurnComplete{turn}
 			turn = turn
 		}
 		world = playTurn(p, world)
 	}
 
-	c.ioCommand <- ioOutput
-	writePgmData(p, c, world)
 	c.events <- FinalTurnComplete{turn, findAliveCells(p,world)}
 
 	// Make sure that the Io has finished any output before exiting.
