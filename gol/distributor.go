@@ -12,30 +12,24 @@ type distributorChannels struct {
 	ioCommand  chan<- ioCommand
 	ioIdle     <-chan bool
 	ioFilename chan<- string
-	ioOutput   chan<- uint8  //data is sent to this eg: ioOutput <- var
-	ioInput    <-chan uint8 //data is received from this eg: var := <- ioInput
+	ioOutput   chan<- uint8
+	ioInput    <-chan uint8
 }
 
-func isAlive(n byte) byte {
-	if n == 255 {
-		return 1
-	}
-	return 0
-}
-
-
-func neighbours(p Params, y, x int , data func(y, x int) uint8) uint8 {
-	var num uint8
+func getNumberOfNeighbours(p Params, col, row int , worldCopy func(y, x int) uint8) uint8 {
+	var neighbours uint8
 	for i := -1; i<2; i++{
 		for j := -1; j<2; j++{
-			if i != 0 || j != 0 {
-				height := (y + p.ImageHeight + i) % p.ImageHeight
-				width := (x + p.ImageWidth + j) % p.ImageWidth
-				num += isAlive(data(height, width))
+			if i != 0 || j != 0 { // do not add the cell which you are getting neighbours of
+				height := (col + p.ImageHeight + i) % p.ImageHeight
+				width := (row + p.ImageWidth + j) % p.ImageWidth
+				if worldCopy(height, width) == 255{
+					neighbours++
+				}
 			}
 		}
 	}
-	return num
+	return neighbours
 }
 
 func makeImmutableMatrix(matrix [][]uint8) func(y, x int) uint8 {
@@ -106,16 +100,22 @@ func findAliveCells(p Params, world [][]uint8) []util.Cell{
 func calculateNextState(p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8,) [][]byte {
 	height := endY - startY
 	newWorld := makeMatrix(height, endX)
+
 	for col := 0; col < height; col++ {
 		for row := 0; row < endX; row++ {
-			n := neighbours(p, startY+col , row , worldCopy) // would need to be modified to get correct neighbours based on position
-			if worldCopy(startY+col,row) == 255 {
+
+			n := getNumberOfNeighbours(p, startY+col , row , worldCopy)
+			currentState := worldCopy(startY+col,row)
+
+			if currentState == 255 {
 				if n == 2 || n == 3 {
 					newWorld[col][row] = 255
 				} else {
 					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY+col}}
 				}
-			} else {
+			}
+
+			if currentState == 0 {
 				if n == 3 {
 					newWorld[col][row] = 255
 					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY+col}}
@@ -127,7 +127,7 @@ func calculateNextState(p Params, c distributorChannels, startY, endY, endX, tur
 }
 
 
-func worker (p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8,){
+func worker(p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8,){
 	newPixelData := calculateNextState(p, c, startY, endY, endX, turn, worldCopy)
 	out <- newPixelData
 }
@@ -138,19 +138,24 @@ func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byt
 	if p.Threads == 1 {
 		newPixelData = calculateNextState(p, c,0, p.ImageHeight, p.ImageWidth, turn, worldCopy)
 	} else {
+		var startHeight, endHeight int
 		workerHeight := p.ImageHeight / p.Threads
+
 		workerChannels := make([]chan [][]uint8, p.Threads)
 		for i := 0; i < p.Threads; i++ {
 			workerChannels[i] = make(chan [][]uint8)
 		}
+
 		for j := 0; j < p.Threads; j++ {
-			if j == p.Threads - 1 { // send the extra part when p.ImageHeight / p.Threads is not a whole number
-				extraHeight :=  workerHeight*(j+1) + (p.ImageHeight % p.Threads)
-				go worker(p, c, workerHeight*j, extraHeight, p.ImageWidth, turn, worldCopy, workerChannels[j])
+			startHeight = workerHeight*j
+			if j == p.Threads - 1 { // send the extra part when workerHeight is not a whole number in last iteration
+				endHeight =  workerHeight*(j+1) + (p.ImageHeight % p.Threads)
 			} else {
-				go worker(p, c, workerHeight*j, workerHeight*(j+1), p.ImageWidth, turn, worldCopy, workerChannels[j])
+				endHeight =  workerHeight*(j+1)
 			}
+			go worker(p, c, startHeight, endHeight, p.ImageWidth, turn, worldCopy, workerChannels[j])
 		}
+
 		for k := 0; k < p.Threads; k++ {
 			result := <-workerChannels[k]
 			newPixelData = append(newPixelData, result...)
@@ -170,14 +175,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	i := make(chan int)
 	go tick(i)
-
-	//AliveCellsCount { CompletedTurns int, CellsCount int } FINISHED
-	//ImageOutputComplete { CompletedTurns int, Filename string } FINISHED
-	//StateChange { CompletedTurns int, NewState State } FINISHED
-	//CellFlipped { CompletedTurns int, Cell State } // This even should be sent every time a cell changes state.
-	//TurnComplete { CompletedTurns int }
-	//FinalTurnComplete { CompletedTurns int, []util.Cell } FINISHED
-
+	
 NextTurnLoop:
 	for turn <p.Turns {
 		select {
@@ -211,6 +209,7 @@ NextTurnLoop:
 	}
 
 	c.events <- FinalTurnComplete{turn, findAliveCells(p,world)}
+	writePgmData(p, c, turn, world) // This line needed if out/ does not have files
 
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
