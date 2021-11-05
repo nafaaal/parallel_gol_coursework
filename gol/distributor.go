@@ -12,30 +12,24 @@ type distributorChannels struct {
 	ioCommand  chan<- ioCommand
 	ioIdle     <-chan bool
 	ioFilename chan<- string
-	ioOutput   chan<- uint8  //data is sent to this eg: ioOutput <- var
-	ioInput    <-chan uint8 //data is received from this eg: var := <- ioInput
+	ioOutput   chan<- uint8
+	ioInput    <-chan uint8 
 }
 
-func isAlive(n byte) byte {
-	if n == 255 {
-		return 1
-	}
-	return 0
-}
-
-
-func neighbours(p Params, y, x int , data func(y, x int) uint8) uint8 {
-	var num uint8
+func getNumberOfNeighbours(p Params, col, row int , worldCopy func(y, x int) uint8) uint8 {
+	var neighbours uint8
 	for i := -1; i<2; i++{
 		for j := -1; j<2; j++{
-			if i != 0 || j != 0 {
-				height := (y + p.ImageHeight + i) % p.ImageHeight
-				width := (x + p.ImageWidth + j) % p.ImageWidth
-				num += isAlive(data(height, width))
+			if i != 0 || j != 0 { // do not add the cell which you are getting neighbours of
+				height := (col + p.ImageHeight + i) % p.ImageHeight
+				width := (row + p.ImageWidth + j) % p.ImageWidth
+				if worldCopy(height, width) == 255{
+					neighbours++
+				}
 			}
 		}
 	}
-	return num
+	return neighbours
 }
 
 func makeImmutableMatrix(matrix [][]uint8) func(y, x int) uint8 {
@@ -108,7 +102,7 @@ func calculateNextState(p Params, c distributorChannels, startY, endY, endX, tur
 	newWorld := makeMatrix(height, endX)
 	for col := 0; col < height; col++ {
 		for row := 0; row < endX; row++ {
-			n := neighbours(p, startY+col , row , worldCopy) // would need to be modified to get correct neighbours based on position
+			n := getNumberOfNeighbours(p, startY+col , row , worldCopy) // would need to be modified to get correct neighbours based on position
 			if worldCopy(startY+col,row) == 255 {
 				if n == 2 || n == 3 {
 					newWorld[col][row] = 255
