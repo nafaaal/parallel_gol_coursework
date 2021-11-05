@@ -182,16 +182,16 @@ NextTurnLoop:
 		case <- i:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
 		case key := <- keyPresses:
-			if key == int32(115) { // 's'
+			if key == 's' {
 				fmt.Println("Starting output")
 				writePgmData(p, c, turn, world)
 			}
-			if key == int32(113) { // 'q'
+			if key == 'q' {
 				writePgmData(p, c, turn, world)
 				c.events <- StateChange{turn, Quitting}
 				break NextTurnLoop
 			}
-			if key == int32(112) { // 'p'
+			if key == 'p' {
 				c.events <- StateChange{turn, Paused}
 				for {
 					await := <-keyPresses
