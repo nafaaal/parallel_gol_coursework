@@ -13,7 +13,7 @@ type distributorChannels struct {
 	ioIdle     <-chan bool
 	ioFilename chan<- string
 	ioOutput   chan<- uint8
-	ioInput    <-chan uint8 
+	ioInput    <-chan uint8
 }
 
 func getNumberOfNeighbours(p Params, col, row int , worldCopy func(y, x int) uint8) uint8 {
@@ -100,16 +100,22 @@ func findAliveCells(p Params, world [][]uint8) []util.Cell{
 func calculateNextState(p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8,) [][]byte {
 	height := endY - startY
 	newWorld := makeMatrix(height, endX)
+
 	for col := 0; col < height; col++ {
 		for row := 0; row < endX; row++ {
-			n := getNumberOfNeighbours(p, startY+col , row , worldCopy) // would need to be modified to get correct neighbours based on position
-			if worldCopy(startY+col,row) == 255 {
+
+			n := getNumberOfNeighbours(p, startY+col , row , worldCopy)
+			currentState := worldCopy(startY+col,row)
+
+			if currentState == 255 {
 				if n == 2 || n == 3 {
 					newWorld[col][row] = 255
 				} else {
 					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY+col}}
 				}
-			} else {
+			}
+
+			if currentState == 0 {
 				if n == 3 {
 					newWorld[col][row] = 255
 					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY+col}}
@@ -121,7 +127,7 @@ func calculateNextState(p Params, c distributorChannels, startY, endY, endX, tur
 }
 
 
-func worker (p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8,){
+func worker(p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8,){
 	newPixelData := calculateNextState(p, c, startY, endY, endX, turn, worldCopy)
 	out <- newPixelData
 }
@@ -132,19 +138,24 @@ func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byt
 	if p.Threads == 1 {
 		newPixelData = calculateNextState(p, c,0, p.ImageHeight, p.ImageWidth, turn, worldCopy)
 	} else {
+		var startHeight, endHeight int
 		workerHeight := p.ImageHeight / p.Threads
+
 		workerChannels := make([]chan [][]uint8, p.Threads)
 		for i := 0; i < p.Threads; i++ {
 			workerChannels[i] = make(chan [][]uint8)
 		}
+
 		for j := 0; j < p.Threads; j++ {
-			if j == p.Threads - 1 { // send the extra part when p.ImageHeight / p.Threads is not a whole number
-				extraHeight :=  workerHeight*(j+1) + (p.ImageHeight % p.Threads)
-				go worker(p, c, workerHeight*j, extraHeight, p.ImageWidth, turn, worldCopy, workerChannels[j])
+			startHeight = workerHeight*j
+			if j == p.Threads - 1 { // send the extra part when workerHeight is not a whole number in last iteration
+				endHeight =  workerHeight*(j+1) + (p.ImageHeight % p.Threads)
 			} else {
-				go worker(p, c, workerHeight*j, workerHeight*(j+1), p.ImageWidth, turn, worldCopy, workerChannels[j])
+				endHeight =  workerHeight*(j+1)
 			}
+			go worker(p, c, startHeight, endHeight, p.ImageWidth, turn, worldCopy, workerChannels[j])
 		}
+
 		for k := 0; k < p.Threads; k++ {
 			result := <-workerChannels[k]
 			newPixelData = append(newPixelData, result...)
