@@ -46,7 +46,7 @@ func makeMatrix(height, width int) [][]uint8 {
 	return matrix
 }
 
-func readPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
+func readPgmData(p Params, c distributorChannels, turn int, world [][]uint8)[][]uint8 {
 	c.ioCommand <-ioInput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 	for col := 0; col < p.ImageHeight; col++ {
@@ -54,7 +54,7 @@ func readPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
 			data :=  <- c.ioInput
 			world[col][row] = data
 			if data == 255 {
-				c.events <- CellFlipped{0,  util.Cell{X: row, Y: col}}
+				c.events <- CellFlipped{turn,  util.Cell{X: row, Y: col}}
 			}
 		}
 	}
@@ -62,7 +62,7 @@ func readPgmData(p Params, c distributorChannels, world [][]uint8 )[][]uint8 {
 }
 
 func writePgmData(p Params, c distributorChannels, turn int, world [][]uint8){
-	filename := strconv.Itoa(p.ImageWidth)+"x"+strconv.Itoa(p.ImageHeight)+"x"+strconv.Itoa(p.Turns)
+	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(p.Turns)
 	c.ioCommand <- ioOutput
 	c.ioFilename <- filename
 	for col := 0; col < p.ImageHeight; col++ {
@@ -78,27 +78,29 @@ func writePgmData(p Params, c distributorChannels, turn int, world [][]uint8){
 }
 
 func findAliveCells(p Params, world [][]uint8) []util.Cell{
-	var a []util.Cell
+	var alive []util.Cell
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
 			if world[col][row] == 255 {
-				a = append(a, util.Cell{X: row, Y: col})
+				alive = append(alive, util.Cell{X: row, Y: col})
 			}
 		}
 	}
-	return a
+	return alive
 }
 
 
-func calculateNextState(p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8,) [][]byte {
+func calculateNextState(p Params, c distributorChannels, startY, endY, turn int, worldCopy func(y, x int) uint8) [][]byte {
 	height := endY - startY
-	newWorld := makeMatrix(height, endX)
+	width := p.ImageWidth
+	newWorld := makeMatrix(height, width)
 
 	for col := 0; col < height; col++ {
-		for row := 0; row < endX; row++ {
+		for row := 0; row < width; row++ {
 
-			n := getNumberOfNeighbours(p, startY+col , row , worldCopy)
-			currentState := worldCopy(startY+col,row)
+			//startY+col gets the absolute y position when there is more than 1 worker
+			n := getNumberOfNeighbours(p, startY+col, row, worldCopy)
+			currentState := worldCopy(startY+col, row)
 
 			if currentState == 255 {
 				if n == 2 || n == 3 {
@@ -120,8 +122,8 @@ func calculateNextState(p Params, c distributorChannels, startY, endY, endX, tur
 }
 
 
-func worker(p Params, c distributorChannels, startY, endY, endX, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8,){
-	newPixelData := calculateNextState(p, c, startY, endY, endX, turn, worldCopy)
+func worker(p Params, c distributorChannels, startY, endY, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8,){
+	newPixelData := calculateNextState(p, c, startY, endY, turn, worldCopy)
 	out <- newPixelData
 }
 
@@ -129,7 +131,7 @@ func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byt
 	worldCopy := makeImmutableMatrix(world)
 	var newPixelData [][]uint8
 	if p.Threads == 1 {
-		newPixelData = calculateNextState(p, c,0, p.ImageHeight, p.ImageWidth, turn, worldCopy)
+		newPixelData = calculateNextState(p, c,0, p.ImageHeight, turn, worldCopy)
 	} else {
 
 		workerChannels := make([]chan [][]uint8, p.Threads)
@@ -145,7 +147,7 @@ func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byt
 			if j == p.Threads - 1 { // send the extra part when workerHeight is not a whole number in last iteration
 				endHeight += p.ImageHeight % p.Threads
 			}
-			go worker(p, c, startHeight, endHeight, p.ImageWidth, turn, worldCopy, workerChannels[j])
+			go worker(p, c, startHeight, endHeight, turn, worldCopy, workerChannels[j])
 		}
 
 		for k := 0; k < p.Threads; k++ {
@@ -161,9 +163,9 @@ func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byt
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	initialWorld := makeMatrix(p.ImageHeight, p.ImageWidth)
-	world := readPgmData(p, c, initialWorld)
-	ticker := time.NewTicker(2 * time.Second) //send something down ticker.C channel every 2 seconds
 	turn := 0
+	world := readPgmData(p, c, turn, initialWorld)
+	ticker := time.NewTicker(2 * time.Second) //send something down ticker.C channel every 2 seconds
 
 NextTurnLoop:
 	for turn <p.Turns {
