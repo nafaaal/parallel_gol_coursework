@@ -77,13 +77,6 @@ func writePgmData(p Params, c distributorChannels, turn int, world [][]uint8){
 	c.events <- ImageOutputComplete{turn, filename}
 }
 
-func tick(i chan int){
-	for {
-		i <- 1
-		<-time.After(2*time.Second)
-	}
-}
-
 func findAliveCells(p Params, world [][]uint8) []util.Cell{
 	var a []util.Cell
 	for col := 0; col < p.ImageHeight; col++ {
@@ -138,20 +131,19 @@ func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byt
 	if p.Threads == 1 {
 		newPixelData = calculateNextState(p, c,0, p.ImageHeight, p.ImageWidth, turn, worldCopy)
 	} else {
-		var startHeight, endHeight int
-		workerHeight := p.ImageHeight / p.Threads
 
 		workerChannels := make([]chan [][]uint8, p.Threads)
 		for i := 0; i < p.Threads; i++ {
 			workerChannels[i] = make(chan [][]uint8)
 		}
 
+		workerHeight := p.ImageHeight / p.Threads
+
 		for j := 0; j < p.Threads; j++ {
-			startHeight = workerHeight*j
+			startHeight := workerHeight*j
+			endHeight :=  workerHeight*(j+1)
 			if j == p.Threads - 1 { // send the extra part when workerHeight is not a whole number in last iteration
-				endHeight =  workerHeight*(j+1) + (p.ImageHeight % p.Threads)
-			} else {
-				endHeight =  workerHeight*(j+1)
+				endHeight += p.ImageHeight % p.Threads
 			}
 			go worker(p, c, startHeight, endHeight, p.ImageWidth, turn, worldCopy, workerChannels[j])
 		}
@@ -170,16 +162,13 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	initialWorld := makeMatrix(p.ImageHeight, p.ImageWidth)
 	world := readPgmData(p, c, initialWorld)
-
+	ticker := time.NewTicker(2 * time.Second) //send something down ticker.C channel every 2 seconds
 	turn := 0
 
-	i := make(chan int)
-	go tick(i)
-	
 NextTurnLoop:
 	for turn <p.Turns {
 		select {
-		case <- i:
+		case <- ticker.C:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
 		case key := <- keyPresses:
 			if key == 's' {
