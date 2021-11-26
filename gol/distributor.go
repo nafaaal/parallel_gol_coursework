@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -16,14 +17,14 @@ type distributorChannels struct {
 	ioInput    <-chan uint8
 }
 
-func getNumberOfNeighbours(p Params, col, row int , worldCopy func(y, x int) uint8) uint8 {
+func getNumberOfNeighbours(p Params, col, row int, worldCopy func(y, x int) uint8) uint8 {
 	var neighbours uint8
-	for i := -1; i<2; i++{
-		for j := -1; j<2; j++{
-			if i != 0 || j != 0 { // do not add the cell which you are getting neighbours of
+	for i := -1; i < 2; i++ {
+		for j := -1; j < 2; j++ {
+			if i != 0 || j != 0 { //{i=0, j=0} is the cell you are trying to get neighbours of!
 				height := (col + p.ImageHeight + i) % p.ImageHeight
 				width := (row + p.ImageWidth + j) % p.ImageWidth
-				if worldCopy(height, width) == 255{
+				if worldCopy(height, width) == 255 {
 					neighbours++
 				}
 			}
@@ -46,22 +47,22 @@ func makeMatrix(height, width int) [][]uint8 {
 	return matrix
 }
 
-func readPgmData(p Params, c distributorChannels, turn int, world [][]uint8)[][]uint8 {
-	c.ioCommand <-ioInput
+func readPgmData(p Params, c distributorChannels, turn int, world [][]uint8) [][]uint8 {
+	c.ioCommand <- ioInput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
-			data :=  <- c.ioInput
+			data := <-c.ioInput
 			world[col][row] = data
 			if data == 255 {
-				c.events <- CellFlipped{turn,  util.Cell{X: row, Y: col}}
+				c.events <- CellFlipped{turn, util.Cell{X: row, Y: col}}
 			}
 		}
 	}
 	return world
 }
 
-func writePgmData(p Params, c distributorChannels, turn int, world [][]uint8){
+func writePgmData(p Params, c distributorChannels, turn int, world [][]uint8) {
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(p.Turns)
 	c.ioCommand <- ioOutput
 	c.ioFilename <- filename
@@ -77,7 +78,7 @@ func writePgmData(p Params, c distributorChannels, turn int, world [][]uint8){
 	c.events <- ImageOutputComplete{turn, filename}
 }
 
-func findAliveCells(p Params, world [][]uint8) []util.Cell{
+func findAliveCells(p Params, world [][]uint8) []util.Cell {
 	var alive []util.Cell
 	for col := 0; col < p.ImageHeight; col++ {
 		for row := 0; row < p.ImageWidth; row++ {
@@ -88,7 +89,6 @@ func findAliveCells(p Params, world [][]uint8) []util.Cell{
 	}
 	return alive
 }
-
 
 func calculateNextState(p Params, c distributorChannels, startY, endY, turn int, worldCopy func(y, x int) uint8) [][]byte {
 	height := endY - startY
@@ -106,14 +106,14 @@ func calculateNextState(p Params, c distributorChannels, startY, endY, turn int,
 				if n == 2 || n == 3 {
 					newWorld[col][row] = 255
 				} else {
-					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY+col}}
+					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY + col}}
 				}
 			}
 
 			if currentState == 0 {
 				if n == 3 {
 					newWorld[col][row] = 255
-					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY+col}}
+					c.events <- CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: row, Y: startY + col}}
 				}
 			}
 		}
@@ -121,8 +121,7 @@ func calculateNextState(p Params, c distributorChannels, startY, endY, turn int,
 	return newWorld
 }
 
-
-func worker(p Params, c distributorChannels, startY, endY, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8,){
+func worker(p Params, c distributorChannels, startY, endY, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8) {
 	newPixelData := calculateNextState(p, c, startY, endY, turn, worldCopy)
 	out <- newPixelData
 }
@@ -131,7 +130,7 @@ func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byt
 	worldCopy := makeImmutableMatrix(world)
 	var newPixelData [][]uint8
 	if p.Threads == 1 {
-		newPixelData = calculateNextState(p, c,0, p.ImageHeight, turn, worldCopy)
+		newPixelData = calculateNextState(p, c, 0, p.ImageHeight, turn, worldCopy)
 	} else {
 
 		workerChannels := make([]chan [][]uint8, p.Threads)
@@ -142,9 +141,9 @@ func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byt
 		workerHeight := p.ImageHeight / p.Threads
 
 		for j := 0; j < p.Threads; j++ {
-			startHeight := workerHeight*j
-			endHeight :=  workerHeight*(j+1)
-			if j == p.Threads - 1 { // send the extra part when workerHeight is not a whole number in last iteration
+			startHeight := workerHeight * j
+			endHeight := workerHeight * (j + 1)
+			if j == p.Threads-1 { // send the extra part when workerHeight is not a whole number in last iteration
 				endHeight += p.ImageHeight % p.Threads
 			}
 			go worker(p, c, startHeight, endHeight, turn, worldCopy, workerChannels[j])
@@ -168,11 +167,11 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	ticker := time.NewTicker(2 * time.Second) //send something down ticker.C channel every 2 seconds
 
 NextTurnLoop:
-	for turn <p.Turns {
+	for turn < p.Turns {
 		select {
-		case <- ticker.C:
+		case <-ticker.C:
 			c.events <- AliveCellsCount{turn, len(findAliveCells(p, world))}
-		case key := <- keyPresses:
+		case key := <-keyPresses:
 			if key == 's' {
 				fmt.Println("Starting output")
 				writePgmData(p, c, turn, world)
@@ -195,11 +194,11 @@ NextTurnLoop:
 		default:
 			world = playTurn(p, c, turn, world)
 			turn++
-			c.events <- TurnComplete{ turn}
+			c.events <- TurnComplete{turn}
 		}
 	}
 
-	c.events <- FinalTurnComplete{turn, findAliveCells(p,world)}
+	c.events <- FinalTurnComplete{turn, findAliveCells(p, world)}
 	writePgmData(p, c, turn, world) // This line needed if out/ does not have files
 
 	// Make sure that the Io has finished any output before exiting.
@@ -207,7 +206,7 @@ NextTurnLoop:
 	<-c.ioIdle
 
 	c.events <- StateChange{turn, Quitting}
-	
+
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	close(c.events)
 }
