@@ -17,26 +17,21 @@ type distributorChannels struct {
 	ioInput    <-chan uint8
 }
 
-func getNumberOfNeighbours(p Params, col, row int, worldCopy func(y, x int) uint8) uint8 {
-	var neighbours uint8
-	for i := -1; i < 2; i++ {
-		for j := -1; j < 2; j++ {
-			if i != 0 || j != 0 { //{i=0, j=0} is the cell you are trying to get neighbours of!
-				height := (col + p.ImageHeight + i) % p.ImageHeight
-				width := (row + p.ImageWidth + j) % p.ImageWidth
-				if worldCopy(height, width) == 255 {
+func calculateNeighbours(width, y, x int, haloWorld [][]uint8) int {
+	height := len(haloWorld)
+	neighbours := 0
+	for i := -1; i <= 1; i++ {
+		for j := -1; j <= 1; j++ {
+			if i != 0 || j != 0 {
+				h := (y + height + i) % height
+				w := (x + width + j) % width
+				if haloWorld[h][w] == 255 {
 					neighbours++
 				}
 			}
 		}
 	}
 	return neighbours
-}
-
-func makeImmutableMatrix(matrix [][]uint8) func(y, x int) uint8 {
-	return func(y, x int) uint8 {
-		return matrix[y][x]
-	}
 }
 
 func makeMatrix(height, width int) [][]uint8 {
@@ -90,17 +85,18 @@ func findAliveCells(p Params, world [][]uint8) []util.Cell {
 	return alive
 }
 
-func calculateNextState(p Params, c distributorChannels, startY, endY, turn int, worldCopy func(y, x int) uint8) [][]byte {
-	height := endY - startY
+
+func calculateNextState(p Params, c distributorChannels, startY, endY, turn int, worldCopy [][]uint8) [][]byte {
+	height := len(worldCopy)-2
 	width := p.ImageWidth
 	newWorld := makeMatrix(height, width)
 
-	for col := 0; col < height; col++ {
+	for col, col1 := 0, 1; col < height; col, col1 = col+1, col1+1 {
 		for row := 0; row < width; row++ {
 
 			//startY+col gets the absolute y position when there is more than 1 worker
-			n := getNumberOfNeighbours(p, startY+col, row, worldCopy)
-			currentState := worldCopy(startY+col, row)
+			n := calculateNeighbours(width, col1, row, worldCopy)
+			currentState := worldCopy[col1][row]
 
 			if currentState == 255 {
 				if n == 2 || n == 3 {
@@ -118,18 +114,40 @@ func calculateNextState(p Params, c distributorChannels, startY, endY, turn int,
 			}
 		}
 	}
+
 	return newWorld
 }
 
-func worker(p Params, c distributorChannels, startY, endY, turn int, worldCopy func(y, x int) uint8, out chan<- [][]uint8) {
+func worker(p Params, c distributorChannels, startY, endY, turn int, worldCopy [][]uint8, out chan<- [][]uint8) {
 	newPixelData := calculateNextState(p, c, startY, endY, turn, worldCopy)
 	out <- newPixelData
 }
 
+func getWorkerSlice(world [][]uint8, startY, endY, workerIndex, numberOfWorkers int)[][]uint8{
+	var workerSlice [][]uint8
+	worldHeight := len(world)
+	if workerIndex == 0 {
+		workerSlice = append(workerSlice, world[worldHeight-1])
+		workerSlice = append(workerSlice, world[startY:endY]...)
+		workerSlice = append(workerSlice, world[endY])
+	} else if workerIndex == numberOfWorkers-1 {
+		workerSlice = append(workerSlice, world[startY-1])
+		workerSlice = append(workerSlice, world[startY:endY]...)
+		workerSlice = append(workerSlice, world[0])
+	} else {
+		workerSlice = append(workerSlice, world[startY-1])
+		workerSlice = append(workerSlice, world[startY:endY]...)
+		workerSlice = append(workerSlice, world[endY])
+	}
+	return workerSlice
+}
+
 func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byte {
-	worldCopy := makeImmutableMatrix(world)
-	var newPixelData [][]uint8
+	var newPixelData, worldCopy [][]uint8
 	if p.Threads == 1 {
+		worldCopy = append(worldCopy, world[len(world)-1])
+		worldCopy = append(worldCopy, world...)
+		worldCopy = append(worldCopy, world[0])
 		newPixelData = calculateNextState(p, c, 0, p.ImageHeight, turn, worldCopy)
 	} else {
 
@@ -146,6 +164,7 @@ func playTurn(p Params, c distributorChannels, turn int, world [][]byte) [][]byt
 			if j == p.Threads-1 { // send the extra part when workerHeight is not a whole number in last iteration
 				endHeight += p.ImageHeight % p.Threads
 			}
+			worldCopy = getWorkerSlice(world, startHeight, endHeight, j, p.Threads)
 			go worker(p, c, startHeight, endHeight, turn, worldCopy, workerChannels[j])
 		}
 
@@ -197,7 +216,7 @@ NextTurnLoop:
 			c.events <- TurnComplete{turn}
 		}
 	}
-
+	
 	c.events <- FinalTurnComplete{turn, findAliveCells(p, world)}
 	writePgmData(p, c, turn, world) // This line needed if out/ does not have files
 
